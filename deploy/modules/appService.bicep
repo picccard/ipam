@@ -50,35 +50,57 @@ var runFromPackage = azureCloud == 'AZURE_US_GOV_SECRET' ? true : false
 var engineVersion = loadJsonContent('../../engine/app/version.json')
 var pythonVersion = engineVersion.python
 
-resource appServicePlan 'Microsoft.Web/serverfarms@2021-02-01' = {
-  name: appServicePlanName
-  location: location
-  sku: {
-    name: 'P1v3'
-    size: 'P1v3'
-    tier: 'PremiumV3'
-    capacity: 1
-  }
-  kind: 'linux'
-  properties: {
-    reserved: true
+module serverfarm 'br/public:avm/res/web/serverfarm:0.2.2' = {
+  name: '${deployment().name}-serverfarmDeployment'
+  params: {
+    name: appServicePlanName
+    skuCapacity: 1
+    skuName: 'P1v3'
+    diagnosticSettings: [
+      {
+        metricCategories: [{ category: 'AllMetrics' }]
+        name: 'diagSettings'
+        workspaceResourceId: workspaceId
+      }
+    ]
+    kind: 'Linux'
+    location: location
+    zoneRedundant: false
   }
 }
 
-resource appService 'Microsoft.Web/sites@2021-02-01' = {
-  name: appServiceName
-  location: location
-  kind: deployAsContainer ? 'app,linux,container' : 'app,linux'
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${managedIdentityId}': {}
-    }
-  }
-  properties: {
+module appService 'br/public:avm/res/web/site:0.3.8' = {
+  name: '${deployment().name}-appServiceDeployment'
+  params: {
+    name: appServiceName
+    location: location
+    kind: deployAsContainer ? 'app,linux,container' : 'app,linux'
+    serverFarmResourceId: serverfarm.outputs.resourceId
     httpsOnly: true
-    serverFarmId: appServicePlan.id
-    keyVaultReferenceIdentity: managedIdentityId
+    managedIdentities: {
+      systemAssigned: false
+      userAssignedResourceIds: [managedIdentityId]
+    }
+    keyVaultAccessIdentityResourceId: managedIdentityId
+    diagnosticSettings: [
+      {
+        name: 'diagSettings'
+        logCategoriesAndGroups: [
+          // { category: 'allLogs' }
+          { category: 'AppServiceAntivirusScanAuditLogs' }
+          { category: 'AppServiceHTTPLogs' }
+          { category: 'AppServiceConsoleLogs' }
+          { category: 'AppServiceAppLogs' }
+          { category: 'AppServiceFileAuditLogs' }
+          { category: 'AppServiceAuditLogs' }
+          { category: 'AppServiceIPSecAuditLogs' }
+          { category: 'AppServicePlatformLogs' }
+        ]
+        metricCategories: [{ category: 'AllMetrics' }]
+        workspaceResourceId: workspaceId
+      }
+    ]
+    scmSiteAlsoStopped: false // change this and do whatif
     siteConfig: {
       acrUseManagedIdentityCreds: privateAcr ? true : false
       acrUserManagedIdentityID: privateAcr ? managedIdentityClientId : null
@@ -133,34 +155,37 @@ resource appService 'Microsoft.Web/sites@2021-02-01' = {
             value: '2'
           }
         ],
-        deployAsContainer ? [
-          {
-            name: 'WEBSITE_ENABLE_SYNC_UPDATE_SITE'
-            value: 'true'
-          }
-          {
-            name: 'DOCKER_REGISTRY_SERVER_URL'
-            value: privateAcr ? 'https://${privateAcrUri}' : 'https://index.docker.io/v1'
-          }
-        ] : runFromPackage ? [
-          {
-            name: 'WEBSITE_RUN_FROM_PACKAGE'
-            value: '1'
-          }
-        ] : [
-          {
-            name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
-            value: 'true'
-          }
-        ]
+        deployAsContainer
+          ? [
+              {
+                name: 'WEBSITE_ENABLE_SYNC_UPDATE_SITE'
+                value: 'true'
+              }
+              {
+                name: 'DOCKER_REGISTRY_SERVER_URL'
+                value: privateAcr ? 'https://${privateAcrUri}' : 'https://index.docker.io/v1'
+              }
+            ]
+          : runFromPackage
+              ? [
+                  {
+                    name: 'WEBSITE_RUN_FROM_PACKAGE'
+                    value: '1'
+                  }
+                ]
+              : [
+                  {
+                    name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
+                    value: 'true'
+                  }
+                ]
       )
     }
   }
 }
 
 resource appConfigLogs 'Microsoft.Web/sites/config@2021-02-01' = {
-  name: 'logs'
-  parent: appService
+  name: '${appServiceName}/logs'
   properties: {
     detailedErrorMessages: {
       enabled: true
@@ -178,106 +203,4 @@ resource appConfigLogs 'Microsoft.Web/sites/config@2021-02-01' = {
   }
 }
 
-resource diagnosticSettingsPlan 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diagSettings'
-  scope: appServicePlan
-  properties: {
-    metrics: [
-      {
-        category: 'AllMetrics'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-    ]
-    workspaceId: workspaceId
-  }
-}
-
-resource diagnosticSettingsApp 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diagSettings'
-  scope: appService
-  properties: {
-    logs: [
-      {
-        category: 'AppServiceAntivirusScanAuditLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-      {
-        category: 'AppServiceHTTPLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-      {
-        category: 'AppServiceConsoleLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-      {
-        category: 'AppServiceAppLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-      {
-        category: 'AppServiceFileAuditLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-      {
-        category: 'AppServiceAuditLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-      {
-        category: 'AppServiceIPSecAuditLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-      {
-        category: 'AppServicePlatformLogs'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-    ]
-    metrics: [
-      {
-        category: 'AllMetrics'
-        enabled: true
-        retentionPolicy: {
-          days: 0
-          enabled: false
-        }
-      }
-    ]
-    workspaceId: workspaceId
-  }
-}
-
-output appServiceHostName string = appService.properties.defaultHostName
+output appServiceHostName string = appService.outputs.defaultHostname
