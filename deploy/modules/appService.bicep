@@ -100,7 +100,7 @@ module appService 'br/public:avm/res/web/site:0.3.8' = {
         workspaceResourceId: workspaceId
       }
     ]
-    scmSiteAlsoStopped: false // change this and do whatif
+    scmSiteAlsoStopped: true
     siteConfig: {
       acrUseManagedIdentityCreds: privateAcr ? true : false
       acrUserManagedIdentityID: privateAcr ? managedIdentityClientId : null
