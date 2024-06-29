@@ -182,6 +182,7 @@ module appService 'br/public:avm/res/web/site:0.3.8' = {
 
 // https://github.com/Azure/bicep-registry-modules/issues/2537
 resource appConfigLogs 'Microsoft.Web/sites/config@2021-02-01' = {
+  dependsOn: [ appService ]
   name: '${appServiceName}/logs'
   properties: {
     detailedErrorMessages: {
